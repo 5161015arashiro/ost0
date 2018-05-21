@@ -1,0 +1,4 @@
+/.vagrant
+/data/log/*
+!/data/log/log.conf
+/playbook/*.retry

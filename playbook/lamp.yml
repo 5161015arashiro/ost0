@@ -1,0 +1,57 @@
+- hosts: all
+  user: vagrant
+  sudo: yes
+  tasks:
+    - name: install Apache
+      yum: name=httpd state=latest
+       
+    - name: install Remi repository
+      yum:
+        name: http://rpms.famillecollet.com/enterprise/remi-release-7.rpm
+
+    - name: install PHP7.0 from remi-repository
+      yum:
+       name: "{{ item }}"
+       enablerepo: "remi,remi-php70"
+       state: latest
+      with_items:
+        - php
+        - php-mysql
+        - php-mbstring
+        - php-intl
+        - php-gd
+ 
+    - name: enable & start service httpd
+      systemd: name=httpd state=started enabled=true
+
+    - name: install of MySQL repository rpm
+      yum:
+        name: https://dev.mysql.com/get/mysql57-community-release-el7-11.noarch.rpm
+
+    - name: install MySQL comunity server
+      yum:
+        name: mysql-community-server
+        enablerepo: mysql56-community
+        disablerepo: mysql57-community
+        state: present
+
+    - name: enable & start service mysqld
+      systemd: name=mysqld state=started enabled=true
+
+    - name: Configure MySQL
+      shell:
+        mysqladmin -u root password 3anetwork;
+        mysql -u root -p3anetwork -e 'create database wp;';
+        mysql -u root -p3anetwork -e 'grant all privileges on wp.* to "wpadmin"@"localhost" identified by "password";';
+        mysql -u root -p3anetwork -e 'flush privileges;';
+
+    - name: download Wordpress
+      get_url: 
+        url: https://ja.wordpress.org/wordpress-4.9.5-ja.zip
+        dest: /tmp
+    
+    - name: unarchive Wordpress
+      unarchive: 
+        src: /tmp/wordpress-4.9.5-ja.zip
+        dest: /var/www/html
+        remote_src: yes
