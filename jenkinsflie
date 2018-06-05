@@ -1,0 +1,100 @@
+def jenkins_path= "/var/lib/jenkins"
+def tf_path = "${jenkins_path}/terraform"
+def tf_state_file = "${tf_path}/terraform.tfstate"
+def terraform = "/usr/local/bin/terraform"
+def ansible_path = "${jenkins_path}/ansible"
+def awk_op = "\$3"
+def green_target_id = ""
+def current_blue = ""
+def current_green = ""
+def current_blue_server_id = ""
+def new_blue_server_id = ""
+def new_blue_server_ip = ""
+
+node {
+
+    stage('scm'){
+        checkout scm
+    }
+
+    stage('Confirm current green server.'){
+        if(fileExists ("${tf_state_file}")){
+            dir("${tf_path}"){
+                green_target_id = sh returnStdout: true, script: "${terraform} state show aws_lb_target_group_attachment.green_target | grep target_id | awk '{print ${awk_op}}' | tr -d '\n'"
+                server1_id = sh returnStdout: true, script: "${terraform} state show aws_instance.server1 | egrep '^id' | awk '{print ${awk_op}}' | tr -d '\n'"
+                server2_id = sh returnStdout: true, script: "${terraform} state show aws_instance.server2 | egrep '^id' | awk '{print ${awk_op}}' | tr -d '\n'"
+                if("${green_target_id}" == "${server1_id}"){
+                    current_blue = "server2"
+                    current_green = "server1"
+                    current_blue_server_id = server2_id
+                }else{
+                    current_blue = "server1"
+                    current_green = "server2"
+                    current_blue_server_id = server1_id
+                }
+            }
+        }else{
+            dir("${tf_path}"){
+                sh "${terraform} plan ./initial"
+                sh "${terraform} apply -auto-approve ./initial"
+                server1_ip = sh returnStdout: true, script: "${terraform} state show aws_instance.server1 | egrep '^public_ip' | awk '{print ${awk_op}}' | tr -d '\n'"
+                server2_ip = sh returnStdout: true, script: "${terraform} state show aws_instance.server2 | egrep '^public_ip' | awk '{print ${awk_op}}' | tr -d '\n'"
+            }
+            sh "sleep 5"
+            dir("${ansible_path}"){
+                sh "echo '[web]' > ./hosts"
+                sh "echo '${server1_ip}' >> ./hosts"
+                sh "echo '${server2_ip}' >> ./hosts"
+                sh "ansible-playbook -i ./hosts ostraca.yml --private-key=${ansible_path}/devops.pem"
+            }
+            error "Initial state: Creating an instance and ending halfway. Please execute again when deploying."
+        }
+    }
+
+    stage('Destroy of the current green server.'){
+        try {
+            dir("${tf_path}"){
+                sh "${terraform} destroy -target=aws_instance.${current_green} -auto-approve ./initial"
+            }
+        } catch (exception) {
+            error "Failed to destroy the green server instance."
+        }
+    }
+
+
+    stage('Create new blue server instance.'){
+        try {
+            dir("${tf_path}"){
+                sh "${terraform} apply -auto-approve -var blue_server_id='${current_blue_server_id}' ./new_blue"
+                new_blue_server_id = sh returnStdout: true, script: "${terraform} state show aws_instance.${current_green} | egrep '^id' | awk '{print ${awk_op}}' | tr -d '\n'"
+                new_blue_server_ip = sh returnStdout: true, script: "${terraform} state show aws_instance.${current_green} | egrep '^public_ip' | awk '{print ${awk_op}}' | tr -d '\n'"
+            }
+        } catch (exception) {
+            error "Failed to create the new blue server instance."
+        }
+    }
+
+
+    stage('Provisioning for new blue server.'){
+        dir("${ansible_path}"){
+            sh "echo '[web]' > ./hosts"
+            sh "echo '${new_blue_server_ip}' >> ./hosts"
+            sh "ansible-playbook -i ./hosts ostraca.yml --private-key=${ansible_path}/devops.pem"
+        }
+    }
+
+    stage('Execute server test.'){
+        sh "echo ok"
+    }
+
+    stage('Switch the new blue server.'){
+        try {
+            dir("${tf_path}"){
+                sh "${terraform} apply -auto-approve -var blue_server_id='${new_blue_server_id}' -var green_server_id='${current_blue_server_id}' ./switch"
+            }
+        } catch (exception) {
+            error "Failed to switch the new blue server instance."
+        }
+    }
+
+}

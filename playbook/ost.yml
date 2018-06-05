@@ -1,0 +1,24 @@
+hosts: all
+  user: ec2-user
+  sudo: yes
+  tasks:
+    - name: install apache
+      yum: name=httpd state=latest
+
+    - name: install git
+      yum: name=git state=latest
+
+    - name: git clone https://github.com/masakazuinoue/ostraca3.git
+      git:
+        repo: https://github.com/masakazuinoue/ostraca3.git
+        dest: /tmp/ostraca3
+        version: master
+
+    - name: copy ostraca
+      shell:
+        cp -R /tmp/ostraca3/sources/* /var/www/html;
+        chown -R apache:apache /var/www/html;
+        rm -fr /tmp/ostraca3;
+
+    - name: enable & start service httpd
+      systemd: name=httpd state=started enabled=true
